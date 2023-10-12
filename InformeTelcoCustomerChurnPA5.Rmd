@@ -1,0 +1,402 @@
+---
+title: "Telco Customer Churn Data Analysis "
+author: "Pablo Acevedo, Alvaro Gonzalez, Cristina Pascual"
+date: '`r format(Sys.time(), "%B,%Y")`'
+output: bookdown::gitbook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#Introduction
+This analysis focuses on the behavior of telecom customers who are more likely to leave the platform. The intention is to find out the most striking behavior of customers through EDA and later on use some of the predictive analytics techniques to determine the customers who are most likely to churn.
+
+#Telecom Customer Churn Data Description
+
+***Customers who left within the last month***
+
+  * Churn (Whether the customer churned or not (Yes or No))
+  
+***Services that each customer has signed up for***
+
+  * Phone: Whether the customer has a phone service or not (Yes, No)
+  * Multiple lines: Whether the customer has multiple lines or not (Yes, No, No phone service)
+  * Internet service: Customer's internet service provider (DSL, Fiber optic, No)
+  * Online security: Whether the customer has online security or not (Yes, No, No internet service)
+  * Online backup:Whether the customer has online backup or not (Yes, No, No internet service)
+  * Device protection: Whether the customer has device protection or not (Yes, No, No internet service)
+  * Tech support: Whether the customer has tech support or not (Yes, No, No internet service)
+  * Streaming TV: Whether the customer has streaming TV or not (Yes, No, No internet service)
+  * Streaming movies:Whether the customer has streaming movies or not (Yes, No, No internet service)
+  
+***Customer account information***
+
+  * Tenure: Number of months the customer has stayed with the company
+  * Contract: The contract term of the customer (Month-to-month, One year, Two year)
+  * Payment method: The customer's payment method (Electronic check, Mailed check, Bank transfer (automatic), Credit card (automatic))
+  * Paperless billing: Whether the customer has paperless billing or not (Yes, No)
+  * Monthly charges: The amount charged to the customer monthly
+  * Total charges: The total amount charged to the customer
+
+***Demographic info about customers***
+
+  * Gender: Customer gender (female, male)
+  * SeniorCitizen: Whether the customer is a senior citizen or not (1, 0)
+  * Partner: Whether the customer has a partner or not (Yes, No)
+  * Dependents: Whether the customer has dependents or not (Yes, No)
+
+#Packages Imported
+```{r packages, echo=TRUE, warning=FALSE}
+library(e1071)
+library(ggplot2)
+library(bookdown)
+library(dbplyr)
+library(tidyr)
+library(tidyverse)
+library(MASS)
+library(car)
+library(caret)
+library(cowplot)
+library(caTools)
+library(pROC)
+library(ggcorrplot)
+library(stringr)
+```
+
+#Import and Knowledge of the Data
+```{r dataknowledge, echo=TRUE, warning=FALSE}
+# Read the data 
+Telco.Customer.Churn <- read.csv("C:/local_data/DATA_MIG/USEFUL HINTS/DATASCIENCEMATERIAL/13ejerciciospracticos/Data/Churn/Telco-Customer-Churn.csv")
+#Show dimensions 
+dim(Telco.Customer.Churn)
+#Show examples of the data
+head(Telco.Customer.Churn)
+#Show a summary of the data
+summary(Telco.Customer.Churn)
+```
+
+# Clean of the data
+After reviewing the summary there are 11 observations with some variables incomplete ("NA's") that are going to be removed for the analysis. The new dimensions are the following:
+```{r cleandata, echo=TRUE, warning=FALSE}
+# Copy in a new object all the complete observations. There are 11 observations that are incomplete and are removed from the data to study
+# Old dimension: 7043 21. New dimension: 7432 21
+telco<-data.frame(Telco.Customer.Churn[complete.cases(Telco.Customer.Churn),])
+dim(Telco.Customer.Churn)
+dim(telco)
+```
+ 
+#Clasify in Training, Test & Validation
+
+#Brief data analysis
+Before starting to manipulate data, let's have a look at how the churn relates to the available columns that we have. CHURN column tells us about the number of Customers who left within the last month. Around 26% of them left the platform within the last month.
+
+```{r churnAnalysis, echo=TRUE, warning=FALSE}
+telco %>% 
+  group_by(Churn) %>% 
+  summarise(Count = n())%>% 
+  mutate(percent = prop.table(Count)*100)%>%
+  ggplot(aes(reorder(Churn, -percent), percent), fill = Churn)+
+  geom_col(fill = c("red", "blue"))+
+  xlab("Churn") + 
+  ylab("Percent")+
+  ggtitle("Churn Percent")
+```
+
+If we check the "social" columns, we can see that churn rate is higher in senior citizens, those who are single, and those who are not dependent.
+```{r datagraph1, echo=TRUE, warning=FALSE}
+theme1 <- theme_bw()+
+theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5),legend.position="none")
+theme2 <- theme_bw()+
+theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),legend.position="none")
+options(repr.plot.width = 12, repr.plot.height = 8)
+plot_grid(ggplot(telco, aes(x=SeniorCitizen,fill=Churn))+ geom_bar(position = 'fill')+theme1,
+          ggplot(telco, aes(x=Partner,fill=Churn))+ geom_bar(position = 'fill')+theme1,
+          ggplot(telco, aes(x=Dependents,fill=Churn))+ geom_bar(position = 'fill')+theme_bw() +
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          align = "h")
+```
+
+If we check the columns that relate to the services, we can see that churn rate is higher in those who hired fiber optic, and those who do not buy additional services, such as security, backups, device protection or tech support.
+```{r datagraph2, echo=TRUE, warning=FALSE}
+options(repr.plot.width = 12, repr.plot.height = 8)
+plot_grid(ggplot(telco, aes(x=InternetService,fill=Churn))+ geom_bar(position = 'fill')+ theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)), 
+          ggplot(telco, aes(x=OnlineSecurity,fill=Churn))+ geom_bar(position = 'fill')+theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          ggplot(telco, aes(x=OnlineBackup,fill=Churn))+ geom_bar(position = 'fill')+theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          ggplot(telco, aes(x=DeviceProtection,fill=Churn))+ geom_bar(position = 'fill')+theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          ggplot(telco, aes(x=TechSupport,fill=Churn))+ geom_bar(position = 'fill')+theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          ggplot(telco, aes(x=StreamingTV,fill=Churn))+ geom_bar(position = 'fill')+theme_bw()+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          align = "h")
+```
+
+If we check those columns that relate to the usage of the services, we can see that those who have a monthly contract, use paperless billing or pay by electronic check are more likely to leave.
+```{r datagraph3, echo=TRUE, warning=FALSE}
+plot_grid(ggplot(telco, aes(x=Contract,fill=Churn))+ 
+          geom_bar(position = 'fill')+theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          ggplot(telco, aes(x=PaperlessBilling,fill=Churn))+ 
+          geom_bar(position = 'fill')+theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          ggplot(telco, aes(x=PaymentMethod,fill=Churn))+
+          geom_bar(position = 'fill')+theme_bw()+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          align = "h")
+```
+
+We also have 3 columns with non-discrete data. These are tenure, monthly charges and Total charges. If we look at the median tenure we can see that its about 10 months for those who leave the company.
+```{r datagraph4, echo=TRUE, warning=FALSE}
+options(repr.plot.width =6, repr.plot.height = 2)
+ggplot(telco, aes(y= tenure, x = "", fill = Churn)) + 
+geom_boxplot()+ 
+theme_bw()+
+xlab(" ")
+```
+
+If we have a look at the median amount of money that churned customers spend, we can see its somewhere around 80 dolars.
+```{r datagraph5, echo=TRUE, warning=FALSE}
+ggplot(telco, aes(y= MonthlyCharges, x = "", fill = Churn)) + 
+geom_boxplot()+ 
+theme_bw()+
+xlab(" ")
+```
+
+Total charges do not yield anything significantly different, so we omit it.
+
+#Conversion of the Data
+
+Some variables need some kind of manipulation before exploring the data.
+
+
+Turn "senior citizen" from integer to categories.
+```{r convesiondata1, echo=TRUE, warning=FALSE}
+# Turn senior citizen into categories
+telco$SeniorCitizen <- ifelse(telco$SeniorCitizen==1, "Yes", "No")
+```
+
+Reduce dimensionality of "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport", "StreamingTV", "StreamingMovies". Simplify them to only 2 categories
+```{r convesiondata2, echo=TRUE, warning=FALSE}
+cols <- c("OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport", "StreamingTV", "StreamingMovies")
+for (i in cols) {
+  telco[[i]] <- ifelse(telco[[i]]=="No internet service", "No", ifelse(telco[[i]]=="Yes", "Yes", "No"))
+}
+cols <- c("PhoneService", "MultipleLines")
+for (i in cols) {
+  telco[[i]] <- ifelse(telco[[i]]=="No phone service", "No", ifelse(telco[[i]]=="Yes", "Yes", "No"))
+}
+```
+
+All variables are discrete except for the tenure, the monthly charges and the total charges, which are continuous. These variable can be discretized.
+
+Turn these variables to discrete values.
+```{r conversiondata3, echo=TRUE, warning=FALSE}
+# mutate the tenure into 12-month categories.
+telco$tenure <- cut(telco$tenure, breaks=c(-Inf, 12, 24, 36, 48, 60, 72, Inf), labels=c("1 Year", "2 Years", "3 Years", "4 Years", "5 Years", "6 Years", "7 Years"))
+ggplot(telco, aes(tenure, fill = tenure)) + geom_bar()+ theme1
+
+telco$MonthlyCharges <- cut(telco$MonthlyCharges, breaks=c(-Inf, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, Inf), labels=c(10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120))
+ggplot(telco, aes(MonthlyCharges, fill = MonthlyCharges)) + geom_bar()+ theme1
+
+telco$TotalCharges <- cut(telco$TotalCharges, breaks=c(-Inf, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, Inf), labels=c(1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000))
+ggplot(telco, aes(TotalCharges, fill = TotalCharges)) + geom_bar()+ theme1
+```
+
+
+#What variables have more impact in a customer to leave the company 
+To analyse the impact of each variable in a customer to leave the company, the correlation between Churn variable and the rest of variables have been analysed using the Pearson Chi-squared test, in R the "chisq.test" function. This function has been able to be applied to all variables after the conversion of the continue values to discrete.
+
+First conclusion is that some variables do not have impact, since its p-value is similar or greater than 0.05, therefore it not possible to reject the null hypothesis (that it is that there is not relation between those variables). These are: Gender, Phone service and Multiple lines.
+
+```{r variablenoinfluency, echo=TRUE, warning=FALSE}
+# There is not so much dependency
+chisq.test(telco$Churn,telco$gender)
+chisq.test(telco$Churn,telco$PhoneService)
+chisq.test(telco$Churn,telco$MultipleLines) 
+```
+
+Regarding the rest of variables, they can be ordered using the value of the Chi-squared test. Those which value is higher has more importance than those whose value is smaller.
+
+```{r variableinfluency, echo=FALSE, warning=FALSE}
+#a=chisq.test(telco$Churn,telco$SeniorCitizen)
+#b=chisq.test(telco$Churn,telco$Dependents)
+#c=chisq.test(telco$Churn,telco$Partner) 
+#e=chisq.test(telco$Churn,telco$InternetService)
+#f=chisq.test(telco$Churn,telco$OnlineSecurity)
+#g=chisq.test(telco$Churn,telco$OnlineBackup)
+#h=chisq.test(telco$Churn,telco$DeviceProtection)
+#i=chisq.test(telco$Churn,telco$TechSupport)
+#j=chisq.test(telco$Churn,telco$StreamingTV)
+#k=chisq.test(telco$Churn,telco$StreamingMovies)
+#l=chisq.test(telco$Churn,telco$Contract)
+#m=chisq.test(telco$Churn,telco$PaperlessBilling)
+#n=chisq.test(telco$Churn,telco$PaymentMethod)
+#o=chisq.test(telco$Churn,telco$tenure)
+#p=chisq.test(telco$Churn,telco$TotalCharges)
+#q=chisq.test(telco$Churn,telco$MonthlyCharges)
+
+#m_chis=matrix(c(a$p.value,b$p.value,c$p.value,e$p.value,f$p.value,g$p.value,h$p.value,i$p.value,j$p.value,k$p.value,l$p.value,m$p.value,n$p.value,o$p.value,p$p.value,q$p.value),nrow = 16, ncol = 1)
+#row.names(m_chis)=c("SeniorCitizen","Dependents","Partner","InternetService","OnlineSecurity","OnlineBackup","DeviceProtection","TechSupport","StreamingTV","StreamingMovies","Contract","PaperlessBilling","PaymentMethod","Tenure","TotalCharges","MonthlyCharges")
+#m_chis=data.frame(m_chis)
+#a=sort(-log(m_chis[,1]))
+#plot(a,type="l",lwd=2) # L?nea doble ancho
+#plot(a,type="h") # L?nea doble ancho
+
+#m_chis=matrix(c("SeniorCitizen","Dependents","Partner","InternetService","OnlineSecurity","OnlineBackup","DeviceProtection","TechSupport","StreamingTV","StreamingMovies","Contract","PaperlessBilling","PaymentMethod","Tenure","TotalCharges","MonthlyCharges",a$statistic,b$statistic,c$statistic,e$statistic,f$statistic,g$statistic,h$statistic,i$statistic,j$statistic,k$statistic,l$statistic,m$statistic,n$statistic,o$statistic,p$statistic,q$statistic),nrow = 16, ncol = 2)
+#m_chis=data.frame(m_chis)
+#m_chis
+
+#m_chis$X2=as.numeric(as.character(m_chis$X2))
+
+#a=m_chis 
+
+#ggplot(a,aes(x=reorder(X1,-X2),y=X2)) + geom_bar(stat="identity") + theme(axis.text.x= element_text(angle=45,hjust=1)) + aes(fill="white", colour="red") + 
+#  xlab("Descriptive Statistics") + 
+#  ylab("Influency")+
+#  ggtitle("Influency Of Descriptive Statistics vs Churn")
+```
+
+```{r variableinfluencypvalue, echo=TRUE, warning=FALSE}
+a=chisq.test(telco$Churn,telco$SeniorCitizen)
+b=chisq.test(telco$Churn,telco$Dependents)
+c=chisq.test(telco$Churn,telco$Partner) 
+e=chisq.test(telco$Churn,telco$InternetService)
+f=chisq.test(telco$Churn,telco$OnlineSecurity)
+g=chisq.test(telco$Churn,telco$OnlineBackup)
+h=chisq.test(telco$Churn,telco$DeviceProtection)
+i=chisq.test(telco$Churn,telco$TechSupport)
+j=chisq.test(telco$Churn,telco$StreamingTV)
+k=chisq.test(telco$Churn,telco$StreamingMovies)
+l=chisq.test(telco$Churn,telco$Contract)
+m=chisq.test(telco$Churn,telco$PaperlessBilling)
+n=chisq.test(telco$Churn,telco$PaymentMethod)
+o=chisq.test(telco$Churn,telco$tenure)
+p=chisq.test(telco$Churn,telco$TotalCharges)
+q=chisq.test(telco$Churn,telco$MonthlyCharges)
+
+p_value=matrix(c("SeniorCitizen","Dependents","Partner","InternetService","OnlineSecurity","OnlineBackup","DeviceProtection","TechSupport","StreamingTV","StreamingMovies","Contract","PaperlessBilling","PaymentMethod","Tenure","TotalCharges","MonthlyCharges",a$p.value,b$p.value,c$p.value,e$p.value,f$p.value,g$p.value,h$p.value,i$p.value,j$p.value,k$p.value,l$p.value,m$p.value,n$p.value,o$p.value,p$p.value,q$p.value),nrow = 16, ncol = 2)
+p_value=data.frame(p_value)
+p_value
+
+p_value$X2=as.numeric(as.character(p_value$X2))
+
+p_value$X2=1-log(p_value$X2)
+p_value
+
+p_valuelog=p_value
+
+
+ggplot(p_valuelog,aes(x=reorder(X1,-X2),y=X2)) + geom_bar(stat="identity") + theme(axis.text.x= element_text(angle=45,hjust=1),axis.text.y=element_blank()) + 
+  xlab("Descriptive Statistics") + 
+  ylab("Influence")+
+  ggtitle("Influence Of Descriptive Statistics vs Churn")
+```
+
+The following graphics shows the relation between the most influential variables and churn:
+
+```{r contract, echo=TRUE, warning=FALSE}
+plot(telco$Contract, telco$Churn, main="Churn vs Contract", ylab="Churn", xlab="Contract")
+```
+```{r tenure, echo=TRUE, warning=FALSE}
+plot(telco$tenure, telco$Churn, main="Churn vs Tenure", ylab="Churn", xlab="Tenure")
+```
+
+```{r internetservice, echo=TRUE, warning=FALSE}
+plot(telco$InternetService, telco$Churn, main="Churn vs Internet Service", ylab="Churn", xlab="internetservice")
+```
+
+```{r paymethod1, echo=TRUE, warning=FALSE}
+plot(telco$PaymentMethod, telco$Churn, main="Churn vs Payment Method", ylab="Churn", xlab="Payment Method")
+```
+
+```{r monthlycharges, echo=TRUE, warning=FALSE}
+plot(telco$MonthlyCharges, telco$Churn, main="Churn vs Monthly Charges", ylab="Churn", xlab="monthlycharges")
+```
+
+```{r totalcharges, echo=TRUE, warning=FALSE}
+plot(telco$TotalCharges, telco$Churn, main="Churn vs Total charges", ylab="Churn", xlab="totalcharges")
+```
+
+```{r papersbill, echo=TRUE, warning=FALSE}
+plot(telco$PaperlessBilling, telco$Churn, main="Churn vs PapersBilling", ylab="Churn", xlab="PapersBilling")
+```
+
+
+We can compare a variable with high Chi-p value (for instance, "Contract"") versus one with a low value (for instance, "gender"") to understand these results. It can be seen how the kind of contract influences the behaviour of the customer, while the gender does not have a big influence (it does not matter if the customer is a male or a female).
+
+```{r contract1, echo=TRUE, warning=FALSE}
+plot(telco$Contract, telco$Churn, main="Churn vs Contract", ylab="Churn", xlab="Contract")
+```
+
+
+
+```{r movies, echo=TRUE, warning=FALSE}
+plot(telco$gender, telco$Churn, main="Churn vs Gender", ylab="Churn", xlab="Gender")
+```
+
+
+```{r streamTV, echo=FALSE, warning=FALSE}
+#Not work
+#plot(telco$StreamingTV, telco$Churn, main="Churn vs streamTV", ylab="Churn", xlab="streamTV")
+```
+
+#Filtering of customers with more risk to churn
+
+From the customers that remain in the company, there is 2,5% of those customers with the most influential variables set to the values in which the customer has higher probability of leaving the platform:
+
+  * Contract to Month-to-month
+  * Tenure to One year
+  * Internet Service to Fiber optic
+  * PaymentMethod to Electronic Check
+
+
+```{r filtercustToLeave, echo=TRUE, warning=FALSE}
+
+head(telco)
+telChurnNo = filter(telco,telco$Churn=="No")
+dim(telChurnNo)
+telChurnNoContractMonth = filter(telChurnNo,telChurnNo$Contract=="Month-to-month")
+dim(telChurnNoContractMonth)
+telChurnNoContractMonthTen = filter(telChurnNoContractMonth,telChurnNoContractMonth$tenure=="1 Year")
+dim(telChurnNoContractMonthTen)
+telChurnNoContractMonthTenInternet = filter(telChurnNoContractMonthTen,telChurnNoContractMonthTen$InternetService=="Fiber optic")
+dim(telChurnNoContractMonthTenInternet)
+telChurnNoContractMonthTenInternetPayment = filter(telChurnNoContractMonthTenInternet,telChurnNoContractMonthTenInternet$PaymentMethod=="Electronic check")
+dim(telChurnNoContractMonthTenInternetPayment)
+dim(telco)
+
+percentToLeave=(182*100)/7032
+percentToLeave
+```
+
+#Preliminary Conclusions
+
+1.-This Data Set has losts of observations and variables that are easy to understand and handle.
+
+2.-The 26% of the customers have left the company.
+
+3.-The variables more important in relation with people who leave the company are (per categories):
+
+  *Demography: Customer with more no dependences and without partner and seniors are more likely to leave the company 
+  
+  *Services: Customer with less services are more likely to leave the company
+  
+  *Customer account: Customer with monthly contract, with paperlessbilling and with Payment method Electronic Check are more likely to leave the company 
+
+4.-There are 16 variables whose p-value is very close to 0, showing the importance of all of them. However, we would like to reduce the number of variables for further study. Therefore, we would choose four or five variables with lower p-value, that is, closer to 0. These are: contract, tenure, internet service and payment method.
+
+5.-From the customers that remain in the company, there is 2,5% of those customers with the most influential variables set to the values in which the customer has higher probability of leaving the platform:
+
+  * Contract to Month-to-month
+  * Tenure to One year
+  * Internet Service to Fiber optic
+  * PaymentMethod to Electronic Check
+  
+
+
+

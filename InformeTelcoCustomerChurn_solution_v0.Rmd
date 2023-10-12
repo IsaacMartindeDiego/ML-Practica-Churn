@@ -1,0 +1,1268 @@
+---
+title: "Telco Customer Churn Data Analysis "
+author: "Isaac Martín"
+date: '2018-2019'
+output: 
+  bookdown::gitbook:
+   includes:
+     in_header: header.html
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r htmlTemplate, echo=FALSE}
+# Create the external file
+img = htmltools::img(src = knitr::image_uri( "logotipo_MDS.png"), width="100px",alt = 'logo', 
+               style = 'position:absolute; top:50px; right:1%; padding:10px;z-index:200;')
+
+htmlhead = paste0('
+<script>
+document.write(\'<div class="logos">',img,'</div>\')
+</script>
+')
+
+readr::write_lines(htmlhead, path = "header.html")
+
+```
+
+# Business Understanding
+
+This analysis focuses on the behavior of telecom customers who are more likely to leave the platform. The intention is to find out the most striking behavior of customers through EDA and later on use some of the predictive analytics techniques to determine the customers who are most likely to churn.
+
+# Data Understanding
+
+##Telecom Customer Churn Data Description
+
+***Customers who left within the last month***
+
+  * Churn (Whether the customer churned or not (Yes or No))
+  
+***Services that each customer has signed up for***
+
+  * Phone: Whether the customer has a phone service or not (Yes, No)
+  * Multiple lines: Whether the customer has multiple lines or not (Yes, No, No phone service)
+  * Internet service: Customer's internet service provider (DSL, Fiber optic, No)
+  * Online security: Whether the customer has online security or not (Yes, No, No internet service)
+  * Online backup:Whether the customer has online backup or not (Yes, No, No internet service)
+  * Device protection: Whether the customer has device protection or not (Yes, No, No internet service)
+  * Tech support: Whether the customer has tech support or not (Yes, No, No internet service)
+  * Streaming TV: Whether the customer has streaming TV or not (Yes, No, No internet service)
+  * Streaming movies:Whether the customer has streaming movies or not (Yes, No, No internet service)
+  
+***Customer account information***
+
+  * Tenure: Number of months the customer has stayed with the company
+  * Contract: The contract term of the customer (Month-to-month, One year, Two year)
+  * Payment method: The customer's payment method (Electronic check, Mailed check, Bank transfer (automatic), Credit card (automatic))
+  * Paperless billing: Whether the customer has paperless billing or not (Yes, No)
+  * Monthly charges: The amount charged to the customer monthly
+  * Total charges: The total amount charged to the customer
+
+***Demographic info about customers***
+
+  * Gender: Customer gender (female, male)
+  * SeniorCitizen: Whether the customer is a senior citizen or not (1, 0)
+  * Partner: Whether the customer has a partner or not (Yes, No)
+  * Dependents: Whether the customer has dependents or not (Yes, No)
+
+##Packages Imported
+```{r packages, echo=TRUE, warning=FALSE, message=FALSE}
+library(e1071)
+library(ggplot2)
+library(bookdown)
+library(dbplyr)
+library(tidyr)
+library(tidyverse)
+library(MASS)
+library(car)
+library(caret)
+library(cowplot)
+library(caTools)
+library(pROC)
+library(ggcorrplot)
+library(stringr)
+library(dplyr)
+library(fastDummies)
+library(ROCR)
+library(class)
+library(rpart)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+#library(fastAdaboost)
+library(adabag)
+library(nnet)
+```
+
+##Import and Knowledge of the Data
+```{r dataknowledge, echo=TRUE, warning=FALSE}
+# Read the data 
+Telco.Customer.Churn <- read.csv("./Telco-Customer-Churn.csv")
+#Show dimensions 
+dim(Telco.Customer.Churn)
+#Show examples of the data
+head(Telco.Customer.Churn)
+#Show a summary of the data
+summary(Telco.Customer.Churn)
+```
+
+## Clean of the data
+After reviewing the summary there are 11 observations with some variables incomplete ("NA's") that are going to be removed for the analysis. The new dimensions are the following:
+```{r cleandata, echo=TRUE, warning=FALSE}
+# Copy in a new object all the complete observations. There are 11 observations that are incomplete and are removed from the data to study
+# Old dimension: 7043 21. New dimension: 7432 21
+telco<-data.frame(Telco.Customer.Churn[complete.cases(Telco.Customer.Churn),])
+dim(Telco.Customer.Churn)
+dim(telco)
+```
+ 
+##Clasify in Training, Test & Validation
+For this analysis we will divide the global sample in three subsets for: **training**, **test** and **validation**. In this case, 50% is chosen for training, and 25% for testing and validation, respectively.
+
+```{r samplingdata, echo=TRUE, warning=FALSE}
+# Seed for reproductibility 
+set.seed(1234214)
+
+n_total= dim(telco)[1]
+n_train = n_total * .5
+n_test = n_total *.25
+
+indices_totales = seq(1:n_total)
+indices_train = sample(indices_totales, n_train)
+indices_test = sample(indices_totales[-indices_train],n_test)
+
+telco_train = telco[indices_train,]
+telco_test = telco[indices_test,]
+telco_validation = telco[-c(indices_test,indices_train),]
+```
+
+#Brief data analysis
+Before starting to manipulate data, let's have a look at how the churn relates to the available columns that we have. CHURN column tells us about the number of Customers who left within the last month. Around 26% of them left the platform within the last month. Notice that this analysis is performed on the train data set. The test data set could be used as well, since we assume the test data set is available during this analysis. Since we assume that the validation data set will not be available until the end of the train-test process, it should not be used during this step.
+
+```{r churnAnalysis, echo=TRUE, warning=FALSE}
+telco_train %>% 
+  group_by(Churn) %>% 
+  summarise(Count = n())%>% 
+  mutate(percent = prop.table(Count)*100)%>%
+  ggplot(aes(reorder(Churn, -percent), percent), fill = Churn)+
+  geom_col(fill = c("red", "blue"))+
+  xlab("Churn") + 
+  ylab("Percent")+
+  ggtitle("Churn Percent")
+```
+
+If we check the "social" columns, we can see that churn rate is higher in senior citizens, those who are single, and those who are not dependent.
+```{r datagraph1, echo=TRUE, warning=FALSE}
+theme1 <- theme_bw()+
+theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5),legend.position="none")
+theme2 <- theme_bw()+
+theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),legend.position="none")
+options(repr.plot.width = 12, repr.plot.height = 8)
+plot_grid(ggplot(telco_train, aes(x=SeniorCitizen,fill=Churn))+ geom_bar(position = 'fill')+theme1,
+          ggplot(telco_train, aes(x=Partner,fill=Churn))+ geom_bar(position = 'fill')+theme1,
+          ggplot(telco_train, aes(x=Dependents,fill=Churn))+ geom_bar(position = 'fill')+theme_bw() +
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          align = "h")
+```
+
+If we check the columns that relate to the services, we can see that churn rate is higher in those who hired fiber optic, and those who do not buy additional services, such as security, backups, device protection or tech support.
+```{r datagraph2, echo=TRUE, warning=FALSE}
+options(repr.plot.width = 12, repr.plot.height = 8)
+plot_grid(ggplot(telco_train, aes(x=InternetService,fill=Churn))+ geom_bar(position = 'fill')+ theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)), 
+          ggplot(telco_train, aes(x=OnlineSecurity,fill=Churn))+ geom_bar(position = 'fill')+theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          ggplot(telco_train, aes(x=OnlineBackup,fill=Churn))+ geom_bar(position = 'fill')+theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          ggplot(telco_train, aes(x=DeviceProtection,fill=Churn))+ geom_bar(position = 'fill')+theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          ggplot(telco_train, aes(x=TechSupport,fill=Churn))+ geom_bar(position = 'fill')+theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          ggplot(telco_train, aes(x=StreamingTV,fill=Churn))+ geom_bar(position = 'fill')+theme_bw()+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          align = "h")
+```
+
+If we check those columns that relate to the usage of the services, we can see that those who have a monthly contract, use paperless billing or pay by electronic check are more likely to leave.
+```{r datagraph3, echo=TRUE, warning=FALSE}
+plot_grid(ggplot(telco_train, aes(x=Contract,fill=Churn))+ 
+          geom_bar(position = 'fill')+theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          ggplot(telco_train, aes(x=PaperlessBilling,fill=Churn))+ 
+          geom_bar(position = 'fill')+theme1+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          ggplot(telco_train, aes(x=PaymentMethod,fill=Churn))+
+          geom_bar(position = 'fill')+theme_bw()+
+          scale_x_discrete(labels = function(x) str_wrap(x, width = 10)),
+          align = "h")
+```
+
+We also have 3 columns with non-discrete data. These are tenure, monthly charges and Total charges. If we look at the median tenure we can see that its about 10 months for those who leave the company.
+```{r datagraph4, echo=TRUE, warning=FALSE}
+options(repr.plot.width =6, repr.plot.height = 2)
+ggplot(telco_train, aes(y= tenure, x = "", fill = Churn)) + 
+geom_boxplot()+ 
+theme_bw()+
+xlab(" ")
+```
+
+If we have a look at the median amount of money that churned customers spend, we can see its somewhere around 80 dolars.
+```{r datagraph5, echo=TRUE, warning=FALSE}
+ggplot(telco_train, aes(y= MonthlyCharges, x = "", fill = Churn)) + 
+geom_boxplot()+ 
+theme_bw()+
+xlab(" ")
+```
+
+Total charges do not yield anything significantly different, so we omit it.
+
+##Conversion of the Data
+
+Some variables need some kind of manipulation before exploring the data. Since the transformation is performed over the complete data set, we build the data set (the same as before).
+
+
+Turn "senior citizen" from integer to categories.
+```{r convesiondata1, echo=TRUE, warning=FALSE}
+# Turn senior citizen into categories
+telco$SeniorCitizen <- ifelse(telco$SeniorCitizen==1, "Yes", "No")
+```
+
+Reduce dimensionality of "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport", "StreamingTV", "StreamingMovies". Simplify them to only 2 categories
+```{r convesiondata2, echo=TRUE, warning=FALSE}
+cols <- c("OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport", "StreamingTV", "StreamingMovies")
+for (i in cols) {
+  telco[[i]] <- ifelse(telco[[i]]=="No internet service", "No", ifelse(telco[[i]]=="Yes", "Yes", "No"))
+}
+cols <- c("PhoneService", "MultipleLines")
+for (i in cols) {
+  telco[[i]] <- ifelse(telco[[i]]=="No phone service", "No", ifelse(telco[[i]]=="Yes", "Yes", "No"))
+}
+```
+
+All variables are discrete except for the tenure, the monthly charges and the total charges, which are continuous. These variable can be discretized.
+
+Turn these variables to discrete values.
+```{r conversiondata3, echo=TRUE, warning=FALSE}
+# mutate the tenure into 12-month categories.
+telco$tenure <- cut(telco$tenure, breaks=c(-Inf, 12, 24, 36, 48, 60, 72, Inf), labels=c("1 Year", "2 Years", "3 Years", "4 Years", "5 Years", "6 Years", "7 Years"))
+ggplot(telco, aes(tenure, fill = tenure)) + geom_bar()+ theme1
+
+telco$MonthlyCharges <- cut(telco$MonthlyCharges, breaks=c(-Inf, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, Inf), labels=c(10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120))
+ggplot(telco, aes(MonthlyCharges, fill = MonthlyCharges)) + geom_bar()+ theme1
+
+telco$TotalCharges <- cut(telco$TotalCharges, breaks=c(-Inf, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, Inf), labels=c(1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000))
+ggplot(telco, aes(TotalCharges, fill = TotalCharges)) + geom_bar()+ theme1
+
+# Re-building the datasets with the new variables
+telco_train = telco[indices_train,]
+telco_test = telco[indices_test,]
+telco_validation = telco[-c(indices_test,indices_train),]
+```
+
+
+##What variables have more impact in a customer to leave the company 
+To analyse the impact of each variable in a customer to leave the company, the correlation between Churn variable and the rest of variables have been analysed using the Pearson Chi-squared test, in R the "chisq.test" function. This function has been able to be applied to all variables after the conversion of the continue values to discrete.
+
+First conclusion is that some variables do not have impact, since its p-value is similar or greater than 0.05, therefore it not possible to reject the null hypothesis (that it is that there is not relation between those variables). These are: Gender, Phone service and Multiple lines.
+
+```{r variablenoinfluency, echo=TRUE, warning=FALSE}
+# There is not so much dependency
+chisq.test(telco_train$Churn,telco_train$gender)
+chisq.test(telco_train$Churn,telco_train$PhoneService)
+chisq.test(telco_train$Churn,telco_train$MultipleLines) 
+```
+
+Regarding the rest of variables, they can be ordered using the value of the Chi-squared test. Those which value is higher has more importance than those whose value is smaller.
+
+```{r variableinfluency, echo=FALSE, warning=FALSE}
+#a=chisq.test(telco$Churn,telco$SeniorCitizen)
+#b=chisq.test(telco$Churn,telco$Dependents)
+#c=chisq.test(telco$Churn,telco$Partner) 
+#e=chisq.test(telco$Churn,telco$InternetService)
+#f=chisq.test(telco$Churn,telco$OnlineSecurity)
+#g=chisq.test(telco$Churn,telco$OnlineBackup)
+#h=chisq.test(telco$Churn,telco$DeviceProtection)
+#i=chisq.test(telco$Churn,telco$TechSupport)
+#j=chisq.test(telco$Churn,telco$StreamingTV)
+#k=chisq.test(telco$Churn,telco$StreamingMovies)
+#l=chisq.test(telco$Churn,telco$Contract)
+#m=chisq.test(telco$Churn,telco$PaperlessBilling)
+#n=chisq.test(telco$Churn,telco$PaymentMethod)
+#o=chisq.test(telco$Churn,telco$tenure)
+#p=chisq.test(telco$Churn,telco$TotalCharges)
+#q=chisq.test(telco$Churn,telco$MonthlyCharges)
+
+#m_chis=matrix(c(a$p.value,b$p.value,c$p.value,e$p.value,f$p.value,g$p.value,h$p.value,i$p.value,j$p.value,k$p.value,l$p.value,m$p.value,n$p.value,o$p.value,p$p.value,q$p.value),nrow = 16, ncol = 1)
+#row.names(m_chis)=c("SeniorCitizen","Dependents","Partner","InternetService","OnlineSecurity","OnlineBackup","DeviceProtection","TechSupport","StreamingTV","StreamingMovies","Contract","PaperlessBilling","PaymentMethod","Tenure","TotalCharges","MonthlyCharges")
+#m_chis=data.frame(m_chis)
+#a=sort(-log(m_chis[,1]))
+#plot(a,type="l",lwd=2) # L?nea doble ancho
+#plot(a,type="h") # L?nea doble ancho
+
+#m_chis=matrix(c("SeniorCitizen","Dependents","Partner","InternetService","OnlineSecurity","OnlineBackup","DeviceProtection","TechSupport","StreamingTV","StreamingMovies","Contract","PaperlessBilling","PaymentMethod","Tenure","TotalCharges","MonthlyCharges",a$statistic,b$statistic,c$statistic,e$statistic,f$statistic,g$statistic,h$statistic,i$statistic,j$statistic,k$statistic,l$statistic,m$statistic,n$statistic,o$statistic,p$statistic,q$statistic),nrow = 16, ncol = 2)
+#m_chis=data.frame(m_chis)
+#m_chis
+
+#m_chis$X2=as.numeric(as.character(m_chis$X2))
+
+#a=m_chis 
+
+#ggplot(a,aes(x=reorder(X1,-X2),y=X2)) + geom_bar(stat="identity") + theme(axis.text.x= element_text(angle=45,hjust=1)) + aes(fill="white", colour="red") + 
+#  xlab("Descriptive Statistics") + 
+#  ylab("Influency")+
+#  ggtitle("Influency Of Descriptive Statistics vs Churn")
+```
+
+```{r variableinfluencypvalue, echo=TRUE, warning=FALSE}
+a=chisq.test(telco_train$Churn,telco_train$SeniorCitizen)
+b=chisq.test(telco_train$Churn,telco_train$Dependents)
+c=chisq.test(telco_train$Churn,telco_train$Partner) 
+e=chisq.test(telco_train$Churn,telco_train$InternetService)
+f=chisq.test(telco_train$Churn,telco_train$OnlineSecurity)
+g=chisq.test(telco_train$Churn,telco_train$OnlineBackup)
+h=chisq.test(telco_train$Churn,telco_train$DeviceProtection)
+i=chisq.test(telco_train$Churn,telco_train$TechSupport)
+j=chisq.test(telco_train$Churn,telco_train$StreamingTV)
+k=chisq.test(telco_train$Churn,telco_train$StreamingMovies)
+l=chisq.test(telco_train$Churn,telco_train$Contract)
+m=chisq.test(telco_train$Churn,telco_train$PaperlessBilling)
+n=chisq.test(telco_train$Churn,telco_train$PaymentMethod)
+o=chisq.test(telco_train$Churn,telco_train$tenure)
+p=chisq.test(telco_train$Churn,telco_train$TotalCharges)
+q=chisq.test(telco_train$Churn,telco_train$MonthlyCharges)
+
+p_value=matrix(c("SeniorCitizen","Dependents","Partner","InternetService","OnlineSecurity","OnlineBackup","DeviceProtection","TechSupport","StreamingTV","StreamingMovies","Contract","PaperlessBilling","PaymentMethod","Tenure","TotalCharges","MonthlyCharges",a$p.value,b$p.value,c$p.value,e$p.value,f$p.value,g$p.value,h$p.value,i$p.value,j$p.value,k$p.value,l$p.value,m$p.value,n$p.value,o$p.value,p$p.value,q$p.value),nrow = 16, ncol = 2)
+p_value=data.frame(p_value)
+p_value
+
+p_value$X2=as.numeric(as.character(p_value$X2))
+
+p_value$X2=1-log(p_value$X2)
+p_value
+
+p_valuelog=p_value
+
+
+ggplot(p_valuelog,aes(x=reorder(X1,-X2),y=X2)) + geom_bar(stat="identity") + theme(axis.text.x= element_text(angle=45,hjust=1),axis.text.y=element_blank()) + 
+  xlab("Descriptive Statistics") + 
+  ylab("Influence")+
+  ggtitle("Influence Of Descriptive Statistics vs Churn")
+```
+
+The following graphics shows the relation between the most influential variables and churn:
+
+```{r contract, echo=TRUE, warning=FALSE}
+ggplot(data = telco_train, aes(x = Contract, fill = Churn)) +
+  geom_bar(position = "fill") + ylab("Proportion")+ ggtitle("Churn vs Contract")
+```
+```{r tenure, echo=TRUE, warning=FALSE}
+ggplot(data = telco_train, aes(x = tenure, fill = Churn)) +
+  geom_bar(position = "fill") + ylab("Proportion")+ ggtitle("Churn vs Tenure")
+
+```
+
+```{r internetservice, echo=TRUE, warning=FALSE}
+ggplot(data = telco_train, aes(x = InternetService, fill = Churn)) +
+  geom_bar(position = "fill") + ylab("Proportion")+ ggtitle("Churn vs Internet Service")
+```
+
+```{r paymethod1, echo=TRUE, warning=FALSE}
+ggplot(data = telco_train, aes(x = PaymentMethod, fill = Churn)) +
+  geom_bar(position = "fill") + ylab("Proportion")+ ggtitle("Churn vs Payment Method")
+```
+
+```{r monthlycharges, echo=TRUE, warning=FALSE}
+ggplot(data = telco_train, aes(x = MonthlyCharges, fill = Churn)) +
+  geom_bar(position = "fill") + ylab("Proportion")+ ggtitle("Churn vs Monthly Charges")
+```
+
+```{r totalcharges, echo=TRUE, warning=FALSE}
+ggplot(data = telco_train, aes(x = TotalCharges, fill = Churn)) +
+  geom_bar(position = "fill") + ylab("Proportion")+ ggtitle("Churn vs Total charges")
+```
+
+```{r papersbill, echo=TRUE, warning=FALSE}
+ggplot(data = telco_train, aes(x = PaperlessBilling, fill = Churn)) +
+  geom_bar(position = "fill") + ylab("Proportion")+ ggtitle("Churn vs PapersBilling")
+```
+
+
+We can compare a variable with high Chi-p value (for instance, "Contract"") versus one with a low value (for instance, "gender"") to understand these results. It can be seen how the kind of contract influences the behaviour of the customer, while the gender does not have a big influence (it does not matter if the customer is a male or a female).
+
+```{r contract1, echo=TRUE, warning=FALSE}
+ggplot(data = telco_train, aes(x = Contract, fill = Churn)) +
+  geom_bar(position = "fill") + ylab("Proportion")+ ggtitle("Churn vs Contract")
+```
+
+
+
+```{r movies, echo=TRUE, warning=FALSE}
+ggplot(data = telco_train, aes(x = gender, fill = Churn)) +
+  geom_bar(position = "fill") + ylab("Proportion")+ ggtitle("Churn vs Gender")
+```
+
+
+##Filtering of customers with more risk to churn
+
+From the customers that remain in the company, there is 2,5% of those customers with the most influential variables set to the values in which the customer has higher probability of leaving the platform:
+
+  * Contract to Month-to-month
+  * Tenure to One year
+  * Internet Service to Fiber optic
+  * PaymentMethod to Electronic Check
+
+
+```{r filtercustToLeave, echo=TRUE, warning=FALSE}
+
+head(telco_train)
+telChurnNo = filter(telco_train,telco_train$Churn=="No")
+dim(telChurnNo)
+telChurnNoContractMonth = filter(telChurnNo,telChurnNo$Contract=="Month-to-month")
+dim(telChurnNoContractMonth)
+telChurnNoContractMonthTen = filter(telChurnNoContractMonth,telChurnNoContractMonth$tenure=="1 Year")
+dim(telChurnNoContractMonthTen)
+telChurnNoContractMonthTenInternet = filter(telChurnNoContractMonthTen,telChurnNoContractMonthTen$InternetService=="Fiber optic")
+dim(telChurnNoContractMonthTenInternet)
+telChurnNoContractMonthTenInternetPayment = filter(telChurnNoContractMonthTenInternet,telChurnNoContractMonthTenInternet$PaymentMethod=="Electronic check")
+dim(telChurnNoContractMonthTenInternetPayment)
+dim(telco_train)
+
+percentToLeave=(93*100)/3516
+percentToLeave
+```
+
+##Preliminary Conclusions
+
+1.-This Data Set has losts of observations and variables that are easy to understand and handle.
+
+2.-The 26% of the customers have left the company.
+
+3.-The variables more important in relation with people who leave the company are (per categories):
+
+  *Demography: Customer with more no dependences and without partner and seniors are more likely to leave the company 
+  
+  *Services: Customer with less services are more likely to leave the company
+  
+  *Customer account: Customer with monthly contract, with paperlessbilling and with Payment method Electronic Check are more likely to leave the company 
+
+4.-There are 16 variables whose p-value is very close to 0, showing the importance of all of them. However, we would like to reduce the number of variables for further study. Therefore, we would choose four or five variables with lower p-value, that is, closer to 0. These are: contract, tenure, internet service and payment method.
+
+5.-From the customers that remain in the company, there is 2,6% of those customers with the most influential variables set to the values in which the customer has higher probability of leaving the platform:
+
+  * Contract to Month-to-month
+  * Tenure to One year
+  * Internet Service to Fiber optic
+  * PaymentMethod to Electronic Check
+  
+# Machine Learning Algorithms
+
+## Clustering
+
+To illustrate the performance of clustering methods, we will build our own distance matrix. In this case, the most relevant variables, will be used:
+
+* Contract: it will be scaled: mean equals 0 and variance equals 1.
+* Tenure: it will be scaled: mean equals 0 and variance equals 1.
+* TotalCharges: it will be scaled: mean equals 0 and variance equals 1.
+* PaperlessBilling: it will be scaled: mean equals 0 and variance equals 1.
+* Dependents: it will be scaled: mean equals 0 and variance equals 1.
+* PaymentMethod: it will be convert to dummies variables
+* InternetService: it will be convert to dummies variables
+
+```{r distance_matrix}
+telco_train2 =
+  telco_train %>%
+  mutate(contract_num = scale(as.numeric(as.factor(Contract))), 
+         tenure_num   = scale(as.numeric(tenure)),
+         totalcharges_scale = scale(as.numeric(TotalCharges)),
+         paper_num    = scale(as.numeric(as.factor(PaperlessBilling))),
+         dependent_num =scale(as.numeric(as.factor(Dependents))),
+         churn =Churn)
+
+df2 = dummy_cols(telco_train2$PaymentMethod)
+df3 = dummy_cols(telco_train2$InternetService)
+
+telco_train2 = cbind(telco_train2[,c("paper_num",
+                                     "contract_num","tenure_num",
+                                     "totalcharges_scale","dependent_num")],df2)
+telco_train2 =cbind(telco_train2,df3)
+
+# Distance matrix
+telco_train_dist  = dist(telco_train2)
+
+# To have a look
+as.matrix(telco_train_dist)[1:3,1:3]
+```
+Notice that the distance matrix could be defined in a number of different ways. Here, for simplicity, the Euclidean distance is used. 
+
+Next, two clustering methods are implemented. First, a hierarchical method to find out (if possible) the proper number of clusters. In this particular case, we estimate four as a proper number. However, this decision is subjective. Remember that there are a lot of rules to select the proper number of clusters... No one of this rule know nothing about your "real" problem. That is, no information about the context is used. Thus, the final decision should be completely dependent on the domain.
+
+In addition, a **Multidimensional Scaling** is performed from the distances matrix in order to obtain coordinates from distances.  
+
+```{r clustering}
+# 5 primeros autovectores
+mds1 = cmdscale(telco_train_dist,eig=TRUE,k=7)
+
+# why 7?
+var_cum=(cumsum(mds1$eig)/sum(mds1$eig))
+plot(var_cum)
+abline(h=.9,col=2)
+min(which(var_cum>.9))
+# 7 eigenvalues imply more than 90 percent of the variability of the data
+# That is, the dimension of our problem "is" 7 + noise!!! 
+
+
+hc = hclust(telco_train_dist,method = "average")
+plot(hc)
+
+# 4!!!! 
+# why 4?... read before
+
+num_clusters=4
+km1 = kmeans(mds1$points,centers=num_clusters,nstart = 25)
+plot(mds1$points,pch=19,cex=4,col=km1$cluster)
+```
+
+### Clustering + Classification 
+
+Next, try to answer these question: **Are the clusters related to the labels (Churn vs No Churn)?** Following the results of the previous analysis, there should be a relation between the clusters and the labels. Take into account that the variables selected to perform the cluster analysis are related (corelated) with the labels. To answer the question, we study the distribution of the **Churn** variable in the different clusters.
+
+```{r clustering+class}
+cluster_class=matrix(0,num_clusters,3)
+colnames(cluster_class)=c("cluster","Porcentage","Churn")
+cluster_class[,1]=seq(1:num_clusters)
+for (i in 1:num_clusters){
+  cluster_class[i,2]=nrow(telco_train[km1$cluster == i,])/n_train
+  cluster_class[i,3]=as.vector(table(
+    telco_train[km1$cluster == i,]$Churn)/nrow(telco_train[km1$cluster == i,]))[2]
+}
+cluster_class
+```
+
+Now, we could imply different **Supervised** techniques (with the labels information!) on any of the clusters. However, to apply the clustering to new data (test and validation are "new" data) we will need to obtained the nearest cluster for any new observation.
+First, the distance matrix between the train data and the test data is calculated. 
+Notice that, in order to apply the same transformation, previously defined for the train data set, to the test data set it is neccessary to collect a number of variables from the train data set. For instance, we need to scale the data in the same way as before, that is, the mean and standard deviation are obtained from the train data set and used on the test data set. 
+
+```{r clustering_test}
+
+telco_test2 =
+  telco_test %>%
+  mutate(contract_num = (as.numeric(as.factor(Contract))-mean(as.numeric(as.factor(telco_train$Contract)))/sd(as.numeric(as.factor(telco_train$Contract)))), 
+         tenure_num = (as.numeric(tenure)-mean(as.numeric(telco_train$tenure)))/sd(as.numeric(telco_train$tenure)),
+         totalcharges_scale = (as.numeric(TotalCharges)-mean(as.numeric(telco_train$TotalCharges)))/sd(as.numeric(telco_train$TotalCharges)),
+         paper_num =(as.numeric(as.factor(PaperlessBilling))-mean(as.numeric(as.factor(telco_train$PaperlessBilling))))/sd(as.numeric(as.factor(telco_train$PaperlessBilling))),
+         dependent_num =(as.numeric(as.factor(Dependents))-mean(as.numeric(as.factor(telco_train$Dependents))))/sd(as.numeric(as.factor(telco_train$Dependents))),
+         churn =Churn)
+
+df2 = dummy_cols(telco_test2$PaymentMethod)
+df3 = dummy_cols(telco_test2$InternetService)
+
+telco_test2 = cbind(telco_test2[,c("paper_num",
+                                     "contract_num","tenure_num",
+                                     "totalcharges_scale","dependent_num")],df2)
+telco_test2 =cbind(telco_test2,df3)
+
+telco_dist= as.matrix(dist(rbind(telco_train2,telco_test2)))
+
+telco_train_dist = telco_dist[1:n_train,1:n_train]
+telco_test_dist = telco_dist[(n_train+1):(n_train+n_test),1:n_train]
+
+```
+
+Next, we employ a *SVD* decomposition to obtained points from distances. The projection of new points in the new space is explained, for instance, in *Methods for the combination of kernel matrices within a support vector framework* by *Martín de Diego et al*.
+```{r clusterin_test_points}
+
+z = eigen(telco_train_dist)
+points_train = t(diag(1/(sqrt(z$values[1:7])))%*%t(z$vectors[,1:7])%*%t(as.matrix(telco_train_dist)))
+points_test = t(diag(1/(sqrt(z$values[1:7])))%*%t(z$vectors[,1:7])%*%t(as.matrix(telco_test_dist)))
+
+# It could be
+#z = svd(telco_train_dist)
+#points_train = t(diag(1/(sqrt(z$d[1:7])))%*%t(z$v[,1:7])%*%t(as.matrix(telco_train_dist)))
+#points_test = t(diag(1/(sqrt(z$d[1:7])))%*%t(z$v[,1:7])%*%t(as.matrix(telco_test_dist)))
+
+
+num_clusters=4
+km1 = kmeans(points_train,centers=num_clusters,nstart = 25)
+plot(points_train,pch=19,cex=4,col=km1$cluster)
+
+predict_cl_train=rep(0,n_train)
+for (i in 1:n_train)
+predict_cl_train[i]=as.numeric(names(sort(as.matrix(dist(rbind(points_train[i,],km1$centers)))[1,])[-1])[1])
+
+# comprobación : table(predict_cl_train,km1$cluster)
+
+predict_cl_test=rep(0,n_test)
+for (i in 1:n_test)
+  predict_cl_test[i]=as.numeric(names(sort(as.matrix(dist(rbind(points_test[i,],km1$centers)))[1,])[-1])[1])
+```
+
+Thus, we have the predicted cluster for new observations. Thus, different models could be train (using the training data set) in any of the clusters. Then, the models could be tested (using the test data set).
+
+The first supervised algorithm to train is the **K-Nearest Neighbour** method. The only parameter to be selected is the number of neighbours. To do this, an error measure should be defined. This is the point to do this, since this decision is related to the proper performance of the Machine Learning methods.
+For instance, consider *k=1*: the 1-Nearest Neighbour:
+```{r knn1_model}
+kvecinos=1
+knn_model=knn.cv(telco_train2[,1:12],cl=as.factor(telco_train$Churn),k=kvecinos,prob=TRUE)
+pred_knn=attr(knn_model,"prob") 
+pred_knn[knn_model=="No"]=1-pred_knn[knn_model=="No"] # this is the probability of Churn for any observation
+```
+
+Now, we could calculate the confusion matrix as follows:
+```{r knn1_table}
+p_threshold=0.5
+knn_res=table(pred_knn>p_threshold,telco_train$Churn)
+print(knn_res)
+precision = knn_res[2,2]/(knn_res[2,1]+knn_res[2,2])
+recall = knn_res[2,2]/(knn_res[1,2]+knn_res[2,2])
+beta = 1
+f_measure = (1+beta^2)*precision*recall/(beta^2*precision+recall)
+error = (knn_res[1,2]+knn_res[2,1])/(knn_res[1,1]+knn_res[2,2]+knn_res[1,2]+knn_res[2,1])
+fpr = knn_res[1,1]/(knn_res[1,1]+knn_res[2,1])
+tpr = recall
+roc_knn = roc(telco_train$Churn,pred_knn)
+auc_knn = auc(roc_knn)
+errores_knn=cbind(kvecinos,p_threshold,precision,recall,beta,f_measure,error,fpr,tpr,auc_knn)
+errores_knn
+```
+```{r gplotroc, echo=FALSE}
+
+ggroc2 <- function(rocs, names,classification = "am",
+                   interval = 0.2, breaks = seq(0, 1, interval),limits=c(0,1)){
+  require(pROC)
+  require(ggplot2)
+  
+
+  g <- ggplot() +   geom_segment(aes(x = limits[1], y = limits[2], xend = 1,yend = 0), alpha = 0.5) + 
+    geom_step() +
+    scale_x_reverse(name = "Specificity",limits = c(limits[2],limits[1]), breaks = breaks, expand = c(0.001,0.001)) + 
+    scale_y_continuous(name = "Sensitivity", limits = c(limits[1],limits[2]), breaks = breaks, expand = c(0.001, 0.001)) +
+    theme_bw() + 
+    theme(axis.ticks = element_line(color = "grey80")) +
+    coord_equal()
+  
+  #The loop to calculate ROC's and add them as new layers
+  cols <- palette()
+  n=dim(rocs)[2]
+  for(i in 1:n){
+    croc <- rocs[,i] 
+    sens_spec <- data.frame(spec=rev(croc$specificities),
+                            sens=rev(croc$sensitivities))
+    g <- g + geom_step(aes(x=spec, y=sens), data=sens_spec, col=cols[i], lwd=1)+
+      annotate("text", x = interval/1.2,col=cols[i] ,y = (i/n+interval)/2, vjust = 0, label = paste(names[i],"AUC =",sprintf("%.3f",croc$auc)))
+  }
+  g
+}
+
+```
+
+En esta gráfica representamos todas las posibilidades dados los diferentes *thresholds* para la probabilidad.
+
+```{r gplot1}
+ggroc2(cbind(roc_knn),c("KNN"))
+```
+
+And, of course, we could do this for any election of *k* and *p_threshold*.
+```{r knn1_table2}
+p_threshold=0.25
+knn_res=table(pred_knn>p_threshold,telco_train$Churn)
+print(knn_res)
+precision = knn_res[2,2]/(knn_res[2,1]+knn_res[2,2])
+recall = knn_res[2,2]/(knn_res[1,2]+knn_res[2,2])
+beta = 1
+f_measure = (1+beta^2)*precision*recall/(beta^2*precision+recall)
+error = (knn_res[1,2]+knn_res[2,1])/(knn_res[1,1]+knn_res[2,2]+knn_res[1,2]+knn_res[2,1])
+fpr = knn_res[1,1]/(knn_res[1,1]+knn_res[2,1])
+tpr = recall
+roc_knn = roc(telco_train$Churn,pred_knn)
+auc_knn = auc(roc_knn)
+errores_knn=rbind(errores_knn,cbind(kvecinos,p_threshold,precision,recall,beta,f_measure,error,fpr,tpr,auc_knn))
+errores_knn
+```
+Question: why the AUC: area under curve is the same? 
+```{r knn1_table3}
+
+kvecinos=3
+knn_model=knn.cv(telco_train2[,1:12],cl=as.factor(telco_train$Churn),k=kvecinos,prob=TRUE)
+pred_knn=attr(knn_model,"prob") 
+pred_knn[knn_model=="No"]=1-pred_knn[knn_model=="No"] 
+p_threshold=0.25
+knn_res=table(pred_knn>p_threshold,telco_train$Churn)
+print(knn_res)
+precision = knn_res[2,2]/(knn_res[2,1]+knn_res[2,2])
+recall = knn_res[2,2]/(knn_res[1,2]+knn_res[2,2])
+beta = 1
+f_measure = (1+beta^2)*precision*recall/(beta^2*precision+recall)
+error = (knn_res[1,2]+knn_res[2,1])/(knn_res[1,1]+knn_res[2,2]+knn_res[1,2]+knn_res[2,1])
+fpr = knn_res[1,1]/(knn_res[1,1]+knn_res[2,1])
+tpr = recall
+roc_knn2 = roc(telco_train$Churn,pred_knn)
+auc_knn = auc(roc_knn2)
+errores_knn=rbind(errores_knn,cbind(kvecinos,p_threshold,precision,recall,beta,f_measure,error,fpr,tpr,auc_knn))
+errores_knn
+```
+And now? Why the AUC is not the same?
+
+## Performance Measure
+
+To select a performance measure is a subjetive decision. In this case, given the problem under consideration it could be relevant to consider a model such that the relevance will be given to the detection of Churn. That is, the *False positive rate* is not as relevant as the *True positive rate*. We will concentrate on the Precision and Recall (not on the Specificity). Thus is, the *F_measure* will be used. Now, it has sense to consider a higher weigth for the Precision, that is, the percentage of true Churn when Churn is predicted. In such a case, as subjective decision, the $/beta$ parameter of the *F_measure* is fixed to *.5*.
+```{r knn_performance2}
+
+kvecinos=3
+knn_model=knn.cv(telco_train2[,1:12],cl=as.factor(telco_train$Churn),k=kvecinos,prob=TRUE)
+pred_knn=attr(knn_model,"prob") 
+pred_knn[knn_model=="No"]=1-pred_knn[knn_model=="No"] 
+
+beta=.5
+pred_knn2=prediction(pred_knn,telco_train$Churn)
+perf_knn=performance(pred_knn2,"prec","rec")
+f1_measure_knn=(1+beta^2)*perf_knn@y.values[[1]]*perf_knn@x.values[[1]]/(beta^2*perf_knn@y.values[[1]]+perf_knn@x.values[[1]])
+
+# The optimal value is the value that maximice the F1_measure
+optimo = which.max(f1_measure_knn)
+prec_knn_opt=perf_knn@y.values[[1]][optimo]
+rec_knn_opt=perf_knn@x.values[[1]][optimo]
+f1_measure_knn_opt=(1+beta^2)*prec_knn_opt*rec_knn_opt/(beta^2*prec_knn_opt+rec_knn_opt)
+table(pred_knn>perf_knn@alpha.values[[1]][optimo+1],telco_train$Churn)
+
+
+```
+This is the optimal result for *k=3*. The same could be done for any *k*
+
+```{r knn_opt}
+
+optimo_global=0
+k_optimo=0
+beta =0.5
+for (kvecinos in 1:25){
+knn_model=knn.cv(telco_train2[,1:12],cl=as.factor(telco_train$Churn),k=kvecinos,prob=TRUE)
+pred_knn=attr(knn_model,"prob") 
+pred_knn[knn_model=="No"]=1-pred_knn[knn_model=="No"] 
+
+pred_knn2=prediction(pred_knn,telco_train$Churn)
+perf_knn=performance(pred_knn2,"prec","rec")
+f1_measure_knn=(1+beta^2)*perf_knn@y.values[[1]]*perf_knn@x.values[[1]]/(beta^2*perf_knn@y.values[[1]]+perf_knn@x.values[[1]])
+
+# The optimal value is the value that maximice the F1_measure
+optimo = which.max(f1_measure_knn)
+prec_knn_opt=perf_knn@y.values[[1]][optimo]
+rec_knn_opt=perf_knn@x.values[[1]][optimo]
+f1_measure_knn_opt=(1+beta^2)*prec_knn_opt*rec_knn_opt/(beta^2*prec_knn_opt+rec_knn_opt)
+if (f1_measure_knn_opt>optimo_global){
+   k_optimo=kvecinos
+   optimo_global=f1_measure_knn_opt
+}
+ 
+}
+
+
+```
+
+The best solution is achieved for *9* neighbour.
+
+```{r knn_9}
+
+knn_model=knn.cv(telco_train2[,1:12],cl=as.factor(telco_train$Churn),k=k_optimo,prob=TRUE)
+pred_knn_train=attr(knn_model,"prob") 
+pred_knn_train[knn_model=="No"]=1-pred_knn_train[knn_model=="No"] 
+
+beta=.5
+pred_knn2=prediction(pred_knn_train,telco_train$Churn)
+perf_knn=performance(pred_knn2,"prec","rec")
+f1_measure_knn=(1+beta^2)*perf_knn@y.values[[1]]*perf_knn@x.values[[1]]/(beta^2*perf_knn@y.values[[1]]+perf_knn@x.values[[1]])
+
+# The optimal value is the value that maximice the F1_measure
+optimo = which.max(f1_measure_knn)
+prec_knn_opt=perf_knn@y.values[[1]][optimo]
+rec_knn_opt=perf_knn@x.values[[1]][optimo]
+f1_measure_knn_opt=(1+beta^2)*prec_knn_opt*rec_knn_opt/(beta^2*prec_knn_opt+rec_knn_opt)
+table(pred_knn_train>perf_knn@alpha.values[[1]][optimo+1],telco_train$Churn)
+threshold_optimo_knn=perf_knn@alpha.values[[1]][optimo+1]
+```
+Thus, the Recall is *48%*. That is, the model recovers *48* over *100* of the Churn cases. And the Precision is *68%*, that is the model hits as Churn *68* over *100*. 
+The optimal *F_measure* is *0.608*.
+
+Notice that the value of *beta* implies changes on this results. For instance, for *beta* equals *2* (Recall more relevant that Precision), the optimal value will be:
+
+```{r other_beta, echo=FALSE}
+
+optimo_global=0
+k_optimo=0
+beta =2
+for (kvecinos in 1:25){
+knn_model=knn.cv(telco_train2[,1:12],cl=as.factor(telco_train$Churn),k=kvecinos,prob=TRUE)
+pred_knn=attr(knn_model,"prob") 
+pred_knn[knn_model=="No"]=1-pred_knn[knn_model=="No"] 
+
+pred_knn2=prediction(pred_knn,telco_train$Churn)
+perf_knn3=performance(pred_knn2,"prec","rec")
+f1_measure_knn=(1+beta^2)*perf_knn3@y.values[[1]]*perf_knn3@x.values[[1]]/(beta^2*perf_knn3@y.values[[1]]+perf_knn3@x.values[[1]])
+
+# The optimal value is the value that maximice the F1_measure
+optimo = which.max(f1_measure_knn)
+prec_knn_opt=perf_knn3@y.values[[1]][optimo]
+rec_knn_opt=perf_knn3@x.values[[1]][optimo]
+f1_measure_knn_opt=(1+beta^2)*prec_knn_opt*rec_knn_opt/(beta^2*prec_knn_opt+rec_knn_opt)
+if (f1_measure_knn_opt>optimo_global){
+   k_optimo=kvecinos
+   optimo_global=f1_measure_knn_opt
+}
+ 
+}
+
+knn_model=knn.cv(telco_train2[,1:12],cl=as.factor(telco_train$Churn),k=k_optimo,prob=TRUE)
+pred_knn=attr(knn_model,"prob") 
+pred_knn[knn_model=="No"]=1-pred_knn[knn_model=="No"] 
+
+pred_knn2=prediction(pred_knn,telco_train$Churn)
+perf_knn3=performance(pred_knn2,"prec","rec")
+f1_measure_knn=(1+beta^2)*perf_knn3@y.values[[1]]*perf_knn3@x.values[[1]]/(beta^2*perf_knn3@y.values[[1]]+perf_knn3@x.values[[1]])
+
+# The optimal value is the value that maximice the F1_measure
+optimo = which.max(f1_measure_knn)
+prec_knn3_opt=perf_knn3@y.values[[1]][optimo]
+rec_knn3_opt=perf_knn3@x.values[[1]][optimo]
+f1_measure_knn3_opt=(1+beta^2)*prec_knn3_opt*rec_knn3_opt/(beta^2*prec_knn3_opt+rec_knn3_opt)
+table(pred_knn>perf_knn3@alpha.values[[1]][optimo+1],telco_train$Churn)
+
+```
+That is: the Recall is increased to *86%*. That is, the model recovers *86* over *100* of the Churn cases. However, the Precision is reduced to *46%*, that is the model hits as Churn *46* over *100*. 
+
+## Summary
+The best *k-nn* model is achieved for *k* equals *9*. This has been selected on the train set. Now, on the test set 
+```{r knn_final}
+
+knn_model=knn3Train(telco_train2[,1:12],telco_test2[,1:12],cl=as.factor(telco_train$Churn),k=9,prob=TRUE)
+pred_knn_test=attr(knn_model,"prob")[,2] # this is the probability of Churn for any observation
+
+# The optimal threshold has been chosen. However, It is possible to study the performance of the model under several selections of the threshold.
+roc_knn=roc(telco_test$Churn,pred_knn_test)
+auc(roc_knn)
+
+
+table(pred_knn_test>threshold_optimo_knn,telco_test$Churn)
+
+
+```
+As expected, in the test set, the Recall is *46%* (48 in the train set), and the Precision is *57%* (68 in the train set).
+The *F_measure* is *0.542* (0.608 in the train set).
+
+## Decision Trees
+
+Next, a *Decision Tree* model is build.
+First, we transform all the variables into factos:
+```{r dt_prep}
+
+telco_train_dt = as.data.frame(telco_train[,-1])
+telco_test_dt  = as.data.frame(telco_test[,-1])
+telco_validation_dt  = as.data.frame(telco_validation[,-1])
+
+
+for (i in 1:20)
+{
+  telco_train_dt[,i]=as.factor(telco_train_dt[,i])
+  telco_test_dt[,i] =as.factor(telco_test_dt[,i])
+  telco_validation_dt[,i] =as.factor(telco_validation_dt[,i])
+}
+```
+
+Next, the model is obtained.
+
+```{r DT1}
+# TRAIN
+churn.dt = rpart(Churn~.,data=telco_train_dt,control = rpart.control(cp = 0.001,maxdepth = 5,minbucket = 50))
+y.pred.train.dt=predict(churn.dt, telco_train_dt)
+table(y.pred.train.dt[,2]>0.5, telco_train$Churn)
+error= sum((y.pred.train.dt[,2]>0.5)!= telco_train$Churn)/length(y.pred.train.dt[,2])
+fancyRpartPlot(churn.dt)
+
+y.pred.train.dt.prob=predict(churn.dt, telco_train,type="prob")[,2]
+roc_dt=roc(telco_train$Churn,y.pred.train.dt.prob)
+auc(roc_dt)
+```
+As before, we can select the optimal threshold.
+```{r DToptimal}
+beta=0.5
+pred_dt=prediction(y.pred.train.dt.prob,telco_train$Churn)
+perf_dt=performance(pred_dt,"prec","rec")
+f1_measure_dt=(1+beta^2)*perf_dt@y.values[[1]]*perf_dt@x.values[[1]]/(beta^2*perf_dt@y.values[[1]]+perf_dt@x.values[[1]])
+
+# The optimal value is the value that maximice the F1_measure
+optimo = which.max(f1_measure_dt)
+prec_dt_opt=perf_dt@y.values[[1]][optimo]
+rec_dt_opt=perf_dt@x.values[[1]][optimo]
+f1_measure_dt_opt=(1+beta^2)*prec_dt_opt*rec_dt_opt/(beta^2*prec_dt_opt+rec_dt_opt)
+table(y.pred.train.dt.prob>perf_dt@alpha.values[[1]][optimo+1],telco_train$Churn)
+threshold_optimo_dt=perf_dt@alpha.values[[1]][optimo+1]
+```
+Thus, the Recall is *54%*. That is, the model recovers *54* over *100* of the Churn cases. And the Precision is *65%*, that is the model hits as Churn *65* over *100*. 
+The optimal *F_measure* is *0.623*.
+
+We use this model on the test set.
+
+```{r dt_final}
+y.pred.test.dt.prob=predict(churn.dt, telco_test,type="prob")[,2]
+roc_dt=roc(telco_test$Churn,y.pred.test.dt.prob)
+auc(roc_dt)
+table(y.pred.test.dt.prob>perf_dt@alpha.values[[1]][optimo+1],telco_test$Churn)
+
+```
+Thus, the Recall is *53%*. That is, the model recovers *53* over *100* of the Churn cases. And the Precision is *60%*, that is the model hits as Churn *60* over *100*. 
+
+## Random Forest
+Next, we will try to fit a Random Forest.
+```{r RF_TRAIN}
+
+churn.rf <- randomForest(x=telco_train_dt[,-20],y=telco_train_dt$Churn
+                         , ntree=100
+                         , importance=FALSE
+                         , proximity=FALSE, mtry=6, replace=TRUE,sampsize=c(.75,.25)*n_train/2)
+
+y.pred.train.rf=predict(churn.rf, telco_train_dt)
+table(y.pred.train.rf, telco_train$Churn)
+error= sum(y.pred.train.rf!= telco_train$Churn)/length(y.pred.train.rf)
+error
+# The parameters could be fixed until performance measure ok
+```
+
+As before, we can select the optimal threshold.
+```{r RFoptimal}
+beta=0.5
+y.pred.train.rf.prob=predict(churn.rf, telco_train_dt,type="prob")[,2]
+pred_rf=prediction(y.pred.train.rf.prob,telco_train$Churn)
+perf_rf=performance(pred_rf,"prec","rec")
+f1_measure_rf  =(1+beta^2)*perf_rf@y.values[[1]]*perf_rf@x.values[[1]]/(beta^2*perf_rf@y.values[[1]]+perf_rf@x.values[[1]])
+
+# The optimal value is the value that maximice the F1_measure
+optimo = which.max(f1_measure_rf)
+prec_rf_opt=perf_rf@y.values[[1]][optimo]
+rec_rf_opt=perf_rf@x.values[[1]][optimo]
+f1_measure_rf_opt=(1+beta^2)*prec_rf_opt*rec_rf_opt/(beta^2*prec_rf_opt+rec_rf_opt)
+table(y.pred.train.rf.prob>perf_rf@alpha.values[[1]][optimo+1],telco_train$Churn)
+threshold_optimo_rf=perf_rf@alpha.values[[1]][optimo+1]
+```
+Thus, the Recall is *77%*. That is, the model recovers *77* over *100* of the Churn cases. And the Precision is *91%*, that is the model hits as Churn *91* over *100*. 
+
+We use this model on the test set.
+
+```{r rf_final}
+y.pred.test.rf.prob=predict(churn.rf, telco_test_dt,type="prob")[,2]
+roc_rf=roc(telco_test$Churn,y.pred.test.rf.prob)
+auc(roc_rf)
+table(y.pred.test.rf.prob>threshold_optimo_rf,telco_test$Churn)
+
+```
+Thus, the Recall is *45%*. That is, the model recovers *45* over *100* of the Churn cases. And the Precision is *57%*, that is the model hits as Churn *57* over *100*. 
+
+## Support Vector Machine
+Training
+```{r SVM_TRAIN}
+# Numerical variables
+telco_train_c=cbind(telco_train2,telco_train$Churn)
+telco_test_c=cbind(telco_test2,telco_test$Churn)
+colnames(telco_train_c)[13]="Churn"
+colnames(telco_test_c)[13]="Churn"
+
+# TUNE SVM
+svm1=tune.svm(y=telco_train_c[,13]
+              ,x=telco_train_c[,1:12]
+              ,probability = TRUE,
+              kernel="radial"
+              ,gamma=10^(-3:2),
+              cost=10^(0:2))
+ svm1$best.parameters
+
+
+churn.svm=svm(y=telco_train_c[,13],
+         x=telco_train_c[,1:12],
+         probability = TRUE,
+         kernel="radial",
+         gamma=svm1$best.parameters[1]
+         ,cost=svm1$best.parameters[2])
+```
+As before, we can select the optimal threshold.
+```{r svmoptimal}
+beta_target=0.5
+beta=0.5
+pred_train=predict(churn.svm,telco_train_c[,1:12],probability=TRUE)
+pred_svm1=attr(pred_train,"probabilities")[,2]
+y.pred.train.svm.prob=pred_svm1
+
+pred_svm=prediction(pred_svm1,telco_train$Churn)
+perf_svm=performance(pred_svm,"prec","rec")
+f1_measure_svm =(1+beta^2)*perf_svm@y.values[[1]]*perf_svm@x.values[[1]]/(beta^2*perf_svm@y.values[[1]]+perf_svm@x.values[[1]])
+
+# The optimal value is the value that maximice the F1_measure
+optimo = which.max(f1_measure_svm)
+prec_svm_opt=perf_svm@y.values[[1]][optimo]
+rec_svm_opt=perf_svm@x.values[[1]][optimo]
+f1_measure_svm_opt=(1+beta^2)*prec_svm_opt*rec_svm_opt/(beta^2*prec_svm_opt+rec_svm_opt)
+table(pred_svm1>perf_svm@alpha.values[[1]][optimo+1],telco_train$Churn)
+threshold_optimo_svm=perf_svm@alpha.values[[1]][optimo+1]
+```
+Thus, the Recall is *47%*. That is, the model recovers *47* over *100* of the Churn cases. And the Precision is *67%*, that is the model hits as Churn *67* over *100*. 
+The optimal *F_measure* is *0.618*.
+
+
+We use this model on the test set.
+
+```{r svm_final}
+
+pred_test=predict(churn.svm,telco_test_c[,1:12],probability=TRUE)
+y.pred.test.svm.prob=attr(pred_test,"probabilities")[,2]
+
+roc_svm=roc(telco_test$Churn,y.pred.test.svm.prob)
+auc(roc_svm)
+table(y.pred.test.svm.prob>perf_svm@alpha.values[[1]][optimo+1],telco_test_c$Churn)
+
+```
+Thus, the Recall is *47%*. That is, the model recovers *47* over *100* of the Churn cases. And the Precision is *63%*, that is the model hits as Churn *63* over *100*. 
+
+## Adaboost
+
+Lets try Freund and Schapire's Adaboost.M1 algorithm.
+
+```{r adaboost}
+
+for (i in 1:12)
+{
+  telco_train_c[,i]=as.numeric(telco_train_c[,i])
+  telco_test_c[,i] =as.numeric(telco_test_c[,i])
+}
+churn.ada = adaboost(Churn~.,data=telco_train_c,1000)
+prob.ada=predict(churn.ada,telco_train_c[,1:12])
+prob_ada=prob.ada$prob[,2]
+y.pred.train.ada.prob=prob_ada
+
+pred_ada=prediction(prob_ada,telco_train$Churn)
+perf_ada=performance(pred_ada,"prec","rec")
+f1_measure_ada =(1+beta^2)*perf_ada@y.values[[1]]*perf_ada@x.values[[1]]/(beta^2*perf_ada@y.values[[1]]+perf_ada@x.values[[1]])
+
+# The optimal value is the value that maximice the F1_measure
+optimo = which.max(f1_measure_ada)
+prec_ada_opt=perf_ada@y.values[[1]][optimo]
+rec_ada_opt=perf_ada@x.values[[1]][optimo]
+f1_measure_ada_opt=(1+beta^2)*prec_ada_opt*rec_ada_opt/(beta^2*prec_ada_opt+rec_ada_opt)
+table(prob_ada>perf_ada@alpha.values[[1]][optimo+1],telco_train$Churn)
+threshold_optimo_ada=perf_ada@alpha.values[[1]][optimo+1]
+```
+Thus, the Recall is *55%*. That is, the model recovers *55* over *100* of the Churn cases. And the Precision is *71%*, that is the model hits as Churn *71* over *100*. 
+The optimal *F_measure* is *0.620*.
+
+On the test set.
+
+```{r ada_final}
+prob.ada=predict(churn.ada,telco_test_c[,1:12])
+prob_ada=prob.ada$prob[,2]
+y.pred.test.ada.prob=prob_ada
+
+roc_ada=roc(telco_test_c$Churn,prob_ada)
+auc(roc_ada)
+table(prob_ada>threshold_optimo_ada,telco_test_c$Churn)
+```
+Thus, the Recall is *48%*. That is, the model recovers *48* over *100* of the Churn cases. And the Precision is *57%*, that is the model hits as Churn *57* over *100*. 
+
+
+## Neural Networks
+
+In this part, we will fit a simple Neural Network model.
+```{r NN1}
+set.seed(123445)
+churn.nn = nnet(Churn~.,data=telco_train_c,size=10)
+prob_nn=predict(churn.nn,telco_train_c[,1:12])
+y.pred.train.nn.prob=prob_nn
+
+pred_nn=prediction(prob_nn,telco_train$Churn)
+perf_nn=performance(pred_nn,"prec","rec")
+f1_measure_nn =(1+beta^2)*perf_nn@y.values[[1]]*perf_nn@x.values[[1]]/(beta^2*perf_nn@y.values[[1]]+perf_nn@x.values[[1]])
+
+# The optimal value is the value that maximice the F1_measure
+optimo = which.max(f1_measure_nn)
+prec_nn_opt=perf_nn@y.values[[1]][optimo]
+rec_nn_opt=perf_nn@x.values[[1]][optimo]
+f1_measure_nn_opt=(1+beta^2)*prec_nn_opt*rec_nn_opt/(beta^2*prec_nn_opt+rec_nn_opt)
+table(prob_nn>perf_nn@alpha.values[[1]][optimo+1],telco_train$Churn)
+threshold_optimo_nn=perf_nn@alpha.values[[1]][optimo+1]
+```
+Thus, the Recall is *56%*. That is, the model recovers *56* over *100* of the Churn cases. And the Precision is *66%*, that is the model hits as Churn *67* over *100*. 
+The optimal *F_measure* is *0.634*.
+
+
+On the test set.
+
+```{r nn_final}
+prob_nn=predict(churn.nn,telco_test_c[,1:12])
+y.pred.test.nn.prob=prob_nn
+
+roc_nn=roc(telco_test_c$Churn,prob_nn)
+auc(roc_nn)
+table(prob_nn>threshold_optimo_nn,telco_test_c$Churn)
+```
+Thus, the Recall is *56%*. That is, the model recovers *56* over *100* of the Churn cases. And the Precision is *59%*, that is the model hits as Churn *59* over *100*. 
+
+# Evaluation
+
+We can compare the proposed models.
+```{r comparison1}
+ggroc2(cbind(roc_knn, roc_dt,roc_rf,roc_svm,roc_ada,roc_nn),c("KNN","DT","RF","SVM","ADA","NN"))
+```
+
+But we have defined a proper measure for the performance of the model:
+```{r F1}
+my_f1_measure=function(z,beta=1){
+  precision = z[2,2]/(z[2,2]+z[2,1])
+  recall = z[2,2]/(z[2,2]+z[1,2])
+ return((1+beta^2)*precision*recall/(beta^2*precision+recall))
+  }
+z1 = table(pred_knn_test>threshold_optimo_knn,telco_test$Churn)
+z2 = table(y.pred.test.dt.prob>threshold_optimo_dt,telco_test$Churn)
+z3 = table(y.pred.test.rf.prob>threshold_optimo_rf,telco_test$Churn)
+z4 = table(y.pred.test.svm.prob>threshold_optimo_svm,telco_test_c$Churn)
+z5 = table(prob_ada>threshold_optimo_ada,telco_test_c$Churn)
+z6 = table(prob_nn>threshold_optimo_ada,telco_test_c$Churn)
+
+output_knn = my_f1_measure(z1,beta_target)
+output_dt = my_f1_measure(z2,beta_target)
+output_rf = my_f1_measure(z3,beta_target)
+output_svm = my_f1_measure(z4,beta_target)
+output_ada = my_f1_measure(z5,beta_target)
+output_nn =my_f1_measure(z6,beta_target)
+salida=cbind(c("KNN","DT","RF","SVM","ADA","NN"),round(as.numeric(c(output_knn,output_dt,output_rf,output_svm,output_ada,output_nn)),4))
+salida[sort(salida[,2],index.return=TRUE,decreasing=TRUE)$ix,]
+```
+
+# Model selection
+From all the previous analysis we select the SVM model as the model to be implemented. Notice that there are no big differences between the models under consideration. This is typical when a previously treatment of the data (EDA) has been properly performanced.
+
+Remembering, the SVM model performs as follows:
+```{r SVM_MODEL}
+# TRAIN
+svm_in_train = table(pred_svm1>threshold_optimo_svm,telco_train$Churn)
+svm_in_train
+my_f1_measure(svm_in_train,beta_target)
+
+# TEST
+svm_in_test = table(y.pred.test.svm.prob>threshold_optimo_svm,telco_test_c$Churn)
+svm_in_test
+my_f1_measure(svm_in_test,beta_target)
+```
+
+We can use our model in another way, based on the predicted values:
+```{r SVM_MODEL2}
+risks = cut(y.pred.test.svm.prob, breaks=c(0,.15,.2,threshold_optimo_svm,.8,1), labels=c("low_risk","medium_risk","high_risk","very_high_risk","extreme_risk"))
+
+a=table(risks,telco_test_c$Churn)
+prob_svm_test=matrix(0,5,2)
+prob_svm_test[,1]=round(100*apply(a,1,sum)/n_test,1)
+prob_svm_test[,2]=round(100*a[,2]/apply(a,1,sum),1)
+rownames(prob_svm_test)=c("low_risk","medium_risk","high_risk","very_high_risk","extreme_risk")
+colnames(prob_svm_test)=c("Sample_perc.","Churn_perc.")
+prob_svm_test
+ ggplot(telco_test, aes(x=as.factor(risks),fill=telco_test$Churn))+ geom_bar()+xlab("Churn Predicted Risk")+theme1
+```
+
+And different policies could be designed in the different risky groups.
+
+# Under production: validation of the model
+
+This part to be done during the very last class, the very last minute... If any surprise appears, the only two reasons are:
+
+* The model is wrong. Why?
+* The validation data set does not follow the same distribution as the data before. Why?
+
+```{r SVM_VALIDATION}
+
+``` 
+
+# Just for Fun
+
+## Fusion
+It is possible to fuse information at different levels of the problem:
+
+* **Sensor Level**: it is a bit strange, but sometimes it is useful to combine the signal from several sensors even when these signals are "diferente" (see, for instance, fusion of fingerprint and face images).
+* **Features level**: for instance, to calculate a Distance matrix from a set of features.
+* **Similarity level**: it is possible to consider diferent distances matrices (or similarity matrices) and to combine them (see, for instance, papers by Isaac Martín related to "fusion of information").
+* **Model level**: it is what it is done in a Random Forest, that is, a combination of Decision Trees.
+* **Predicion/Probability level**: for each model in the study, a probability is obtained. These probabilities could be fused. This is the idea we are going to use in this case... just for fun.
+* **Decision level**: two or more models with a final prediction ("Yes" or "No"), and we want to fuse these decisions... probably following a set of rules.
+
+In this particular case, we are going to fuse the two best models previously considered. That is, the DT model and the SVM model. We are going to fuse these models at a **Probability level**. That is, for each observation in the sample we are  going to combine the two obtained probabilities, one from each model. But, how? 
+```{r fusion}
+probabilities_train=as.data.frame(cbind(Churn=as.numeric(telco_train$Churn),
+      knn=pred_knn_train, 
+      dt=y.pred.train.dt.prob, 
+      rf=y.pred.train.rf.prob, 
+      ada=y.pred.train.ada.prob,
+      nnet=y.pred.train.nn.prob,
+      svm=y.pred.train.svm.prob))
+colnames(probabilities_train)[6]="nn"
+y.pred.train.dt.fusion=apply(probabilities_train[,c(3,7)],1,mean)
+
+beta=0.5
+pred_dt.fusion=prediction(y.pred.train.dt.fusion,probabilities_train$Churn)
+perf_dt.fusion=performance(pred_dt.fusion,"prec","rec")
+f1_measure_dt.fusion=(1+beta^2)*perf_dt.fusion@y.values[[1]]*perf_dt.fusion@x.values[[1]]/(beta^2*perf_dt.fusion@y.values[[1]]+perf_dt.fusion@x.values[[1]])
+
+optimo = which.max(f1_measure_dt.fusion)
+prec_dt_opt.fusion=perf_dt.fusion@y.values[[1]][optimo]
+rec_dt_opt.fusion=perf_dt.fusion@x.values[[1]][optimo]
+f1_measure_dt_opt.fusion=(1+beta^2)*prec_dt_opt.fusion*rec_dt_opt.fusion/(beta^2*prec_dt_opt.fusion+rec_dt_opt.fusion)
+table(y.pred.train.dt.fusion>perf_dt.fusion@alpha.values[[1]][optimo+1],probabilities_train$Churn)
+threshold_optimo_dt.fusion=perf_dt.fusion@alpha.values[[1]][optimo+1]
+
+# Las variables son
+probabilities_test=as.data.frame(cbind(Churn=telco_test$Churn,
+                                  knn=pred_knn_test, 
+                                  dt=y.pred.test.dt.prob, 
+                                  rf=y.pred.test.rf.prob, 
+                                  ada=y.pred.test.ada.prob,nnet=y.pred.test.nn.prob,
+                                  svm=y.pred.test.svm.prob))
+colnames(probabilities_test)[6]="nn"
+y.pred.test.dt.fusion=apply(probabilities_test[,c(3,7)],1,mean)
+
+#Remenber
+print("SVM")
+z4
+my_f1_measure(z4,0.5)
+print("DT")
+z2
+my_f1_measure(z2,0.5)
+z2.4=table(y.pred.test.dt.fusion>perf_dt.fusion@alpha.values[[1]][optimo+1],probabilities_test$Churn)
+z2.4
+print("FUSION")
+my_f1_measure(z2.4,0.5)
+
+
+
+
+```
+That is, the fusion of DT and SVM achieves better results that the individual models. A bit complicated? Not really.
+
+## Clusters?
+
+What about the original clusters obtained during the clustering analysis. Remember that we have the information previously stored. The question is... How is distributed the probabilities of Churn predicted by the selected model in any of the clusters?
+```{r clus_svm}
+datos=as.data.frame(cbind(y.pred.train.svm.prob,grupo=km1$cluster,Churn=factor(telco_train$Churn)))
+ggplot(datos, aes(x=y.pred.train.svm.prob, colour=as.factor(grupo))) + geom_density()
+```
+And... perhaps the break points selected in the final model to create the risk categories should be different for any of the cluster.
+```{r clus_svm2}
+for (i in 1:4)
+{
+g1=ggplot(datos[datos$grupo==i,], aes(x=y.pred.train.svm.prob, colour=i)) + geom_density() +guides(fill=FALSE)
+g2=ggplot(datos[datos$grupo==i,], aes(x=y.pred.train.svm.prob, colour=as.factor(Churn))) + geom_density() +guides(fill=FALSE)
+print(g1)
+print(g2)
+}
+```
+Having a look to this pictures and "just for fun"... try this:
+```{r try}
+z=table(datos[datos$grupo==1,]$y.pred.train.svm.prob>.45,datos[datos$grupo==1,]$Churn)+
+table(datos[datos$grupo==2,]$y.pred.train.svm.prob>.16,datos[datos$grupo==2,]$Churn)+
+table(datos[datos$grupo==3,]$y.pred.train.svm.prob>.25,datos[datos$grupo==3,]$Churn)+
+table(datos[datos$grupo==4,]$y.pred.train.svm.prob>.275,datos[datos$grupo==4,]$Churn)
+z
+my_f1_measure(z,0.5)
+```
+To do... to optimice this breakpoints in train and to evaluate in test for each cluster.

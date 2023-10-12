@@ -1,0 +1,266 @@
+---
+#title: "Telco Customer Churn Data Analysis "
+#author: "ISaac Martín"
+#date: "2018-2019"
+runtime: shiny
+output: html_document
+---
+
+``` {r echo = FALSE, message=FALSE, warning=FALSE}
+fluidPage(
+  fluidRow(
+    column(2,img(src="DSLablogo.png", height="auto", width=80)),
+    column(7,h3(strong("Telco Customer Churn Data Analysis"))),
+    column(2,img(src="logotipo_MDS.png", height="auto", width=90))
+  ),
+    fluidRow(
+    column(2),
+    column(7,p("Isaac Martín de Diego")),
+    column(2)
+  ),
+    fluidRow(
+    column(2),
+    column(7,p("2018-2019")),
+    column(2)
+  )
+)
+```
+
+---
+
+# Business Understanding
+
+This analysis focuses on the behavior of telecom customers who are more likely to leave the platform. The intention is to find out the most striking behavior of customers through EDA and later on use some of the predictive analytics techniques to determine the customers who are most likely to churn.
+
+
+``` {r echo = FALSE, message=FALSE, warning=FALSE}
+library(shiny)
+library(ggplot2)
+
+set.seed(123)
+
+# Prob
+
+x=read.csv(file="../bob.txt")[,2]
+y=read.csv(file="../bob.txt")[,3]
+```
+
+``` {r echo = FALSE, message=FALSE, warning=FALSE}
+values <- reactiveValues()
+# Cut-off
+values$cut <- 1
+
+# Portions
+values$portions <- c()
+
+# Label
+values$y <- as.numeric(y)
+```
+# Data Understanding
+
+##Telecom Customer Churn Data Description
+
+***Customers who left within the last month***
+
+  * Churn (Whether the customer churned or not (Yes or No))
+  
+***Services that each customer has signed up for***
+
+  * Phone: Whether the customer has a phone service or not (Yes, No)
+  * Multiple lines: Whether the customer has multiple lines or not (Yes, No, No phone service)
+  * Internet service: Customer's internet service provider (DSL, Fiber optic, No)
+  * Online security: Whether the customer has online security or not (Yes, No, No internet service)
+  * Online backup:Whether the customer has online backup or not (Yes, No, No internet service)
+  * Device protection: Whether the customer has device protection or not (Yes, No, No internet service)
+  * Tech support: Whether the customer has tech support or not (Yes, No, No internet service)
+  * Streaming TV: Whether the customer has streaming TV or not (Yes, No, No internet service)
+  * Streaming movies:Whether the customer has streaming movies or not (Yes, No, No internet service)
+  
+***Customer account information***
+
+  * Tenure: Number of months the customer has stayed with the company
+  * Contract: The contract term of the customer (Month-to-month, One year, Two year)
+  * Payment method: The customer's payment method (Electronic check, Mailed check, Bank transfer (automatic), Credit card (automatic))
+  * Paperless billing: Whether the customer has paperless billing or not (Yes, No)
+  * Monthly charges: The amount charged to the customer monthly
+  * Total charges: The total amount charged to the customer
+
+***Demographic info about customers***
+
+  * Gender: Customer gender (female, male)
+  * SeniorCitizen: Whether the customer is a senior citizen or not (1, 0)
+  * Partner: Whether the customer has a partner or not (Yes, No)
+  * Dependents: Whether the customer has dependents or not (Yes, No)
+
+# Modeling
+
+A *Machine Learning* model has been used to generate Churn prediction for new observations. This model could be configurated by selected the number of final groups or the threshold probability. Notice that only one of the selections is considered at any time.
+
+``` {r echo = FALSE, message=FALSE, warning=FALSE}
+fluidPage(
+  fluidRow(
+    sliderInput("margin", "Please, select the cut-off probability:",0,1,0.453),
+    actionButton("percentage", label ="Threshold")
+  ),
+   fluidRow(
+    sliderInput("parts", "Please, selet the number groups:",2,5,5),
+    actionButton("portions", label ="Number of Groups to be created")
+  ),
+  fluidRow(
+    plotOutput("prob2"),
+    p("Here, the distribution over the sample and the probability of Churn in any of the groups"),
+    column(12,tableOutput("values2"),align="center"),
+    column(12,tableOutput("values"),align="center")
+  ),
+   fluidRow(
+   p("Here, the figure with the frequency over the sample and the frequency  of Churn in any of the groups"),
+   plotOutput("confusion")
+  )
+)
+```
+
+
+
+``` {r echo = FALSE, message=FALSE, warning=FALSE}
+observeEvent(input$margin, {
+  if (length(x) > 0) {
+    values$cut <- input$margin 
+   }
+},ignoreNULL = FALSE,ignoreInit = FALSE)
+
+observeEvent(input$parts, {
+  if (length(x) > 0) {
+   # dim_portion <- max(x) / input$parts
+  #  value_cutoff <- 0
+       if ( input$parts==2){
+      values$portions <- c(0,.453,1)
+     }
+       if ( input$parts==3){
+      values$portions <- c(0,.175,.453,1)
+       }
+      if ( input$parts==4){
+      values$portions <- c(0,.15,.2,.453,1)
+      }
+      if ( input$parts==5){
+      values$portions <- c(0,.15,.2,.453,.8,1)
+     }
+    
+  #  for (i in 1:input$parts) {
+   #   value_cutoff <- value_cutoff + dim_portion
+    #  values$portions <- c(values$portions,value_cutoff)
+    #}
+    output$prob2 <- renderPlot({
+      plot(density(x),main ="Probability of Churn",col="darkblue",xlab="Probability",ylab="Density",lwd=3)
+      for (i in 1:length(values$portions)) {
+        if (values$portions[i] > min(x) && values$portions[i] < max(x))
+          abline(v=values$portions[i],col="orange",lwd=3)
+              abline(v=input$margin ,col="cyan",lwd=4)
+
+      }
+    })
+  }
+},ignoreNULL = TRUE,ignoreInit = TRUE)
+
+observeEvent(input$percentage, {
+  if (length(x) > 0) {
+ 
+   risks = cut(x,breaks=c(0,values$cut,1))
+      a=table(risks,y)
+      tabla2=matrix(0,2,2)
+      tabla2[,1]=a[,1]
+      tabla2[,2]=a[,2]
+       prob_svm_test=matrix(0,2,2)
+      prob_svm_test[,1]=round(100*apply(a,1,sum)/length(x),1)
+      prob_svm_test[,2]=round(100*a[,2]/apply(a,1,sum),1)
+         rownames(prob_svm_test)=c("low_risk","high_risk")
+           rownames(tabla2)=rownames(prob_svm_test)
+      colnames(tabla2)=c("No Churn","Churn")
+       output$values2 <- renderTable({tabla2},rownames=TRUE,align='c')
+         
+          etiquetas=c("low_risk","high_risk")
+             colnames(prob_svm_test)=c("Sample_perc.","Churn_perc.")
+
+       output$values <- renderTable({prob_svm_test},rownames=TRUE,align='c')
+      datos=as.data.frame(cbind(risks=risks,y=y))
+       output$confusion <- renderPlot({
+                         ggplot(datos, aes(x=factor(risks,labels=etiquetas),fill=as.factor(y)))+ geom_bar()+xlab("Churn Predicted Risk")
+
+                       })
+  }
+},ignoreNULL = TRUE,ignoreInit = TRUE)
+
+
+observeEvent(input$portions, {
+  if (length(x) > 0) {
+    portions <- c()
+    for (i in 1:length(input$parts)) {
+      portions <- c(portions,i)
+    }
+    
+    percentage = c()
+  #  for (i in 1:length(values$portions)) {
+   #   cont = 1
+  #    for (j in 1:length(x)) {
+   #     if (x[j] < values$portions[i])
+    #      cont = cont + 1
+    #  }
+     # percentage = c(percentage,cont/length(x)*100)
+    #}
+   # values <- data.frame(percentage)
+     
+     if ( input$parts==2){
+      values$portions <- c(0,.453,1)
+     }
+       if ( input$parts==3){
+      values$portions <- c(0,.175,.453,1)
+       }
+      if ( input$parts==4){
+      values$portions <- c(0,.15,.2,.453,1)
+      }
+      if ( input$parts==5){
+      values$portions <- c(0,.15,.2,.453,.8,1)
+     }
+      risks = cut(x,breaks=values$portions)
+      a=table(risks,y)
+      tabla2=matrix(0,input$parts,2)
+      tabla2[,1]=a[,1]
+      tabla2[,2]=a[,2]
+       prob_svm_test=matrix(0,input$parts,2)
+      prob_svm_test[,1]=round(100*apply(a,1,sum)/length(x),1)
+      prob_svm_test[,2]=round(100*a[,2]/apply(a,1,sum),1)
+         if ( input$parts==2){
+       rownames(prob_svm_test)=c("low_risk","high_risk")
+          etiquetas=c("low_risk","high_risk")
+          }
+      if ( input$parts==3){
+       rownames(prob_svm_test)=c("low_risk","medium_risk","very_high_risk")
+         etiquetas=c("low_risk","medium_risk","very_high_risk")
+         }
+         if ( input$parts==4){
+       rownames(prob_svm_test)=c("low_risk","medium_risk","high_risk","very_high_risk")
+         etiquetas=c("low_risk","medium_risk","high_risk","very_high_risk")
+         }
+      if ( input$parts==5){
+      rownames(prob_svm_test)=c("low_risk","medium_risk","high_risk","very_high_risk","extreme_risk")
+      etiquetas=c("low_risk","medium_risk","high_risk","very_high_risk","extreme_risk")
+     }
+      colnames(prob_svm_test)=c("Sample_perc.","Churn_perc.")
+      rownames(tabla2)=rownames(prob_svm_test)
+      colnames(tabla2)=c("No Churn","Churn")
+       output$values2 <- renderTable({tabla2},rownames=TRUE,align='c')
+       output$values <- renderTable({prob_svm_test},rownames=TRUE,align='c')
+      datos=as.data.frame(cbind(risks=risks,y=y))
+       output$confusion <- renderPlot({
+                         ggplot(datos, aes(x=factor(risks,labels=etiquetas),fill=as.factor(y)))+ geom_bar()+xlab("Churn Predicted Risk")
+
+                       })
+       }
+},ignoreNULL = TRUE,ignoreInit = TRUE)
+
+
+```
+
+---
+<center>![](DSLab logo_1.jpg){width=200px}</center>
+<br>
+</br>
